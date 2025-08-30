@@ -277,7 +277,7 @@ bot.action('invite', async (ctx) => {
 
 bot.action('support', async (ctx) => {
   await ctx.answerCbQuery();
-  await ctx.reply('☎️ Contact support: dbcheckt');
+  await ctx.reply('☎️ Contact support:@ dbchect');
 });
 
 // ========== ERROR HANDLING ==========

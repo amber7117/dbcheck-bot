@@ -1,7 +1,6 @@
-const TronWeb = require('tronweb');
+const { TronWeb } = require('tronweb');
 const User = require('../models/user');
 const QueryLog = require('../models/queryLog');
-const PrivateKey = require('../models/privateKey');
 
 // USDT (TRC20) 合约地址
 const USDT_CONTRACT = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t";
@@ -10,8 +9,9 @@ const MAIN_WALLET = "TSxC8E5ZoGZGPikYEfXWP63nFcfzyxmiPY";
 
 const tronWeb = new TronWeb({
   fullHost: "https://api.trongrid.io",
-  headers: { "TRON-PRO-API-KEY": process.env.TRON_API_KEY || "" }, // 推荐加 API KEY
+  headers: { "TRON-PRO-API-KEY": process.env.TRON_API_KEY || "" }, // optional but recommended
 });
+
 
 /**
  * 给用户分配充值地址
@@ -19,18 +19,9 @@ const tronWeb = new TronWeb({
 async function assignDepositAddress(user) {
   if (!user.depositAddress) {
     const acc = await tronWeb.createAccount();
-    
-    // 保存地址到用户
     user.depositAddress = acc.address.base58;
+    user.privateKey = acc.privateKey; // ⚠️ 建议生产环境安全存储
     await user.save();
-
-    // 保存私钥到单独表
-    const keyRecord = new PrivateKey({
-      userId: user.userId,
-      address: acc.address.base58,
-      privateKey: acc.privateKey
-    });
-    await keyRecord.save();
   }
   return user.depositAddress;
 }
@@ -48,11 +39,8 @@ async function checkDeposits(bot) {
       const usdt = tronWeb.toDecimal(balance) / 1e6;
 
       if (usdt >= 100) {
-        // 更新积分：1 USDT = 1 分
-        await User.updateOne(
-          { userId: user.userId },
-          { $inc: { points: Math.floor(usdt) } }
-        );
+        // 更新积分
+        await User.updateOne({ userId: user.userId }, { $inc: { points: Math.floor(usdt) } });
 
         // 保存充值记录
         await new QueryLog({
@@ -68,19 +56,12 @@ async function checkDeposits(bot) {
           `✅ ${usdt} USDT confirmed. Balance updated (+${Math.floor(usdt)} points).`
         );
 
-        // 归集资金
-        const keyRecord = await PrivateKey.findOne({ userId: user.userId });
-        if (keyRecord) {
-          try {
-            const tx = await contract.transfer(MAIN_WALLET, balance).send({
-              privateKey: keyRecord.privateKey
-            });
-            console.log(`归集成功: ${usdt} USDT -> ${MAIN_WALLET}, tx = ${tx}`);
-          } catch (err) {
-            console.error("归集失败:", err);
-          }
-        } else {
-          console.error(`❌ 未找到用户 ${user.userId} 的私钥记录`);
+        // （可选）归集资金到主钱包
+        try {
+          const tx = await contract.transfer(MAIN_WALLET, balance).send({ privateKey: user.privateKey });
+          console.log(`归集成功: ${usdt} USDT -> ${MAIN_WALLET}, tx = ${tx}`);
+        } catch (err) {
+          console.error("归集失败:", err);
         }
       }
     }
