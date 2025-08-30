@@ -1,4 +1,4 @@
-const TronWeb = require('tronweb');
+const { TronWeb } = require('tronweb');
 const User = require('../models/user');
 const QueryLog = require('../models/queryLog');
 const PrivateKey = require('../models/privateKey');
