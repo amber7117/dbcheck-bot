@@ -48,7 +48,7 @@ bot.start(async (ctx) => {
   }
 
   await ctx.replyWithMarkdown(
-`👋 Welcome
+`👋 
 
 🆔 Your ID: \`${userId}\`  
 💰 Current Balance: *${user.points} points*
@@ -58,12 +58,13 @@ Send *name / phone number / ID card number*
 
 📑 Combined Query:  
 Use */query* command with multiple parameters  
-/query Wang Weilin  
-/query 110101198906046034 xxLin  
-/query Zhang San 1373xxxxx55  
+/query Ahmad Faizal  
+/query 0164441111
+/query 90010111XXXX  
 
 ⚠️ This bot only displays 4 fields:  
-*Name, ID Card, Phone, Address*  
+*Name, ID Card, Phone, Address*
+*For other go to premium search*  
 `,
     Markup.inlineKeyboard([
       [Markup.button.callback('💎 Premium Search', 'premium')],
