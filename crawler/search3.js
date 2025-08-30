@@ -6,7 +6,6 @@ const login = require('./login');
 
 puppeteer.use(StealthPlugin());
 
-// --- ensure cookies are valid and attached ---
 async function ensureCookies(page) {
   let dbCookies = await Cookie.findOne({ name: "zowner" });
 
@@ -16,42 +15,19 @@ async function ensureCookies(page) {
     dbCookies = await Cookie.findOne({ name: "zowner" });
   }
 
-  // sanitize cookies
-  const validCookies = dbCookies.cookies.map(c => ({
-    name: c.name || c.key,   // fallback if saved as "key"
-    value: c.value,
-    domain: c.domain || "zowner.info",
-    path: c.path || "/",
-    httpOnly: c.httpOnly ?? false,
-    secure: c.secure ?? false,
-    sameSite: c.sameSite || "Lax"
-  }));
+  await page.setCookie(...dbCookies.cookies);
 
-  await page.setCookie(...validCookies);
-
-  // check if session still valid
+  // verify session still valid
   await page.goto('https://zowner.info/index.php', { waitUntil: 'networkidle2' });
   if (page.url().includes('login.php')) {
     console.log("⚠️ Cookies expired, re-login...");
     await login();
     dbCookies = await Cookie.findOne({ name: "zowner" });
-
-    const newValidCookies = dbCookies.cookies.map(c => ({
-      name: c.name || c.key,
-      value: c.value,
-      domain: c.domain || "zowner.info",
-      path: c.path || "/",
-      httpOnly: c.httpOnly ?? false,
-      secure: c.secure ?? false,
-      sameSite: c.sameSite || "Lax"
-    }));
-
-    await page.setCookie(...newValidCookies);
+    await page.setCookie(...dbCookies.cookies);
     await page.goto('https://zowner.info/index.php', { waitUntil: 'networkidle2' });
   }
 }
 
-// --- perform search ---
 async function search(queryText) {
   let browser;
   try {
@@ -65,10 +41,10 @@ async function search(queryText) {
     const page = await browser.newPage();
     await ensureCookies(page);
 
-    // choose category (default: name)
+    // choose category
     let category = 3;
-    if (/^\d{12,18}$/.test(queryText)) category = 1;   // IC
-    else if (/^\d{11}$/.test(queryText)) category = 4; // Phone
+    if (/^\d{12,18}$/.test(queryText)) category = 1;
+    else if (/^\d{11}$/.test(queryText)) category = 4;
 
     // fill form
     await page.evaluate((term, cat) => {
@@ -81,10 +57,8 @@ async function search(queryText) {
       }
     }, queryText, category);
 
-    // wait for results
     await page.waitForSelector('#dataTable tbody tr, .no-results', { timeout: 20000 });
 
-    // extract data
     const results = await page.evaluate(() => {
       const rows = Array.from(document.querySelectorAll('#dataTable tbody tr'));
       const seen = new Set();
@@ -99,23 +73,14 @@ async function search(queryText) {
           const address = cols[3].innerText.trim();
           const phone = cols[4].innerText.trim();
 
-          const finalId =
-            idCard && idCard !== 'NULL'
-              ? idCard
-              : (oldId && oldId !== 'NULL' ? oldId : '');
-
+          const finalId = idCard && idCard !== 'NULL' ? idCard : (oldId && oldId !== 'NULL' ? oldId : '');
           if (!finalId || !phone) return;
 
           const key = `${finalId}-${phone}`;
           if (seen.has(key)) return;
           seen.add(key);
 
-          items.push({
-            name: name || 'Unknown',
-            idCard: finalId,
-            phone: phone,
-            address: address || 'Unknown'
-          });
+          items.push({ name, idCard: finalId, phone, address });
         }
       });
       return items;
