@@ -17,23 +17,37 @@ const tronWeb = new TronWeb({
  * 给用户分配充值地址
  */
 async function assignDepositAddress(user) {
-  if (!user.depositAddress) {
-    const acc = await tronWeb.createAccount();
-    
-    // 保存地址到用户
-    user.depositAddress = acc.address.base58;
-    await user.save();
-
-    // 保存私钥到单独表
-    const keyRecord = new PrivateKey({
-      userId: user.userId,
-      address: acc.address.base58,
-      privateKey: acc.privateKey
-    });
-    await keyRecord.save();
+  // 如果用户已经有地址 → 直接返回
+  if (user.depositAddress) {
+    return user.depositAddress;
   }
-  return user.depositAddress;
+
+  // 如果数据库已有私钥记录，但 User 没写入 depositAddress → 修复一次
+  const existingKey = await PrivateKey.findOne({ userId: user.userId });
+  if (existingKey) {
+    user.depositAddress = existingKey.address;
+    await user.save();
+    return existingKey.address;
+  }
+
+  // 第一次分配 → 生成新地址
+  const acc = await tronWeb.createAccount();
+
+  // 保存到 User
+  user.depositAddress = acc.address.base58;
+  await user.save();
+
+  // 保存到 PrivateKey
+  const keyRecord = new PrivateKey({
+    userId: user.userId,
+    address: acc.address.base58,
+    privateKey: acc.privateKey
+  });
+  await keyRecord.save();
+
+  return acc.address.base58;
 }
+
 
 /**
  * 检查所有用户充值
