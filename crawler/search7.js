@@ -65,15 +65,10 @@ async function search(queryText) {
     const page = await browser.newPage();
     await ensureCookies(page);
 
-    // --- choose category ---
-    let category = 3; // default: name
-    if (/^\d+$/.test(queryText)) {
-      if (queryText.length === 12) {
-        category = 1; // 身份证
-      } else {
-        category = 4; // 电话号码
-      }
-    }
+    // choose category (default: name)
+    let category = 3;
+    if (/^\d{12,18}$/.test(queryText)) category = 1;   // IC
+    else if (/^\d{11}$/.test(queryText)) category = 4; // Phone
 
     // fill form
     await page.evaluate((term, cat) => {
