@@ -1,94 +1,93 @@
-// crawler/search.js
 const axios = require("axios");
+const tough = require("tough-cookie");
+const { wrapper } = require("axios-cookiejar-support");
 const cheerio = require("cheerio");
-const CookieModel = require("../models/cookie");
-const login = require("./login");
-
-async function ensureCookies() {
-  let cookieDoc = await CookieModel.findOne({ name: "zowner" });
-  if (!cookieDoc) {
-    console.log("⚠️ No cookies found, logging in...");
-    await login();
-    cookieDoc = await CookieModel.findOne({ name: "zowner" });
-  }
-  return cookieDoc.cookies;
-}
+const Cookie = require("../models/cookie");
 
 async function search(queryText) {
-  try {
-    let cookies = await ensureCookies();
+  const dbCookies = await Cookie.findOne({ name: "zowner" });
+  if (!dbCookies) throw new Error("⚠️ Please login first");
 
-    // 判断搜索类型
-    let category = 3; // name
-    if (/^\d{12,18}$/.test(queryText)) category = 1; // IC
-    else if (/^\d{11}$/.test(queryText)) category = 4; // phone
-
-    // 发起搜索请求
-    const res = await axios.post(
-      "https://zowner.info/index.php",
-      new URLSearchParams({
-        keyword: queryText,
-        category: category.toString(),
+  const jar = new tough.CookieJar();
+  // restore cookies from DB
+  for (const c of dbCookies.cookies) {
+    jar.setCookieSync(
+      new tough.Cookie({
+        key: c.key || c.name,
+        value: c.value,
+        domain: c.domain.replace(/^\./, ""),
+        httpOnly: c.httpOnly,
+        secure: c.secure,
+        path: c.path || "/",
       }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Cookie: cookies,
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-          Referer: "https://zowner.info/index.php",
-        },
-      }
+      "https://zowner.info"
     );
-
-    // 如果返回页面跳转回 login.php，说明 session 失效，重新登录
-    if (res.data.includes("login.php") || res.request.res.responseUrl.includes("login.php")) {
-      console.log("⚠️ Session expired, re-login...");
-      await login();
-      return await search(queryText);
-    }
-
-    // 解析结果页面
-    const $ = cheerio.load(res.data);
-    const rows = $("#dataTable tbody tr");
-    const items = [];
-    const seen = new Set();
-
-    rows.each((_, row) => {
-      const cols = $(row).find("td");
-      if (cols.length >= 5) {
-        const idCard = $(cols[0]).text().trim();
-        const name = $(cols[1]).text().trim();
-        const oldId = $(cols[2]).text().trim();
-        const address = $(cols[3]).text().trim();
-        const phone = $(cols[4]).text().trim();
-
-        const finalId =
-          idCard && idCard !== "NULL"
-            ? idCard
-            : oldId && oldId !== "NULL"
-            ? oldId
-            : "";
-        if (!finalId || !phone) return;
-
-        const key = `${finalId}-${phone}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-
-        items.push({
-          name: name || "未知",
-          idCard: finalId,
-          phone,
-          address: address || "未知",
-        });
-      }
-    });
-
-    return items;
-  } catch (err) {
-    console.error("❌ Search error:", err.message || err);
-    throw err;
   }
+
+  const client = wrapper(axios.create({ jar }));
+
+  // 1. Load search page
+  const searchPage = await client.get("https://zowner.info/index.php", {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+
+  const $ = cheerio.load(searchPage.data);
+  const formData = {
+    keyword: queryText,
+    category: 3,
+  };
+
+  // detect category automatically
+  if (/^\d{12,18}$/.test(queryText)) formData.category = 1;
+  else if (/^\d{11}$/.test(queryText)) formData.category = 4;
+
+  // if there are hidden inputs, include them
+  $("form input[type=hidden]").each((i, el) => {
+    const name = $(el).attr("name");
+    const value = $(el).attr("value") || "";
+    if (name) formData[name] = value;
+  });
+
+  // 2. Submit search form
+  const res = await client.post(
+    "https://zowner.info/index.php",
+    new URLSearchParams(formData).toString(),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+        Referer: "https://zowner.info/index.php",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    }
+  );
+
+  if (res.status !== 200) {
+    throw new Error(`❌ Search failed, status ${res.status}`);
+  }
+
+  // 3. Parse results
+  const $$ = cheerio.load(res.data);
+  const rows = [];
+  $$("#dataTable tbody tr").each((i, el) => {
+    const cols = $$(el).find("td");
+    if (cols.length >= 5) {
+      rows.push({
+        idCard: $$(cols[0]).text().trim(),
+        name: $$(cols[1]).text().trim(),
+        oldId: $$(cols[2]).text().trim(),
+        address: $$(cols[3]).text().trim(),
+        phone: $$(cols[4]).text().trim(),
+      });
+    }
+  });
+
+  return rows;
 }
 
 module.exports = search;
